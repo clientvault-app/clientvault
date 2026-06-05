@@ -1,25 +1,42 @@
-import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle, NeonHttpDatabase } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
 import * as schema from "./schema";
 
-function createDb() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error(
-      "DATABASE_URL is not set. Please configure your Neon database connection."
-    );
+// Module-level singleton (lazy initialized on first use)
+let _db: NeonHttpDatabase<typeof schema> | null = null;
+
+function getDb(): NeonHttpDatabase<typeof schema> {
+  if (!_db) {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      throw new Error(
+        "DATABASE_URL is not set. Please configure your Neon database connection."
+      );
+    }
+    const sql = neon(databaseUrl);
+    _db = drizzle(sql, { schema });
   }
-  const sql = neon(process.env.DATABASE_URL);
-  return drizzle(sql, { schema });
+  return _db;
 }
 
-// Lazy singleton
-let _db: ReturnType<typeof createDb> | null = null;
+// Export a getter function instead of a direct instance
+// so the adapter doesn't check the type at import time
+export { getDb };
 
-export const db = new Proxy({} as ReturnType<typeof createDb>, {
-  get(_, prop) {
-    if (!_db) _db = createDb();
-    return (_db as Record<string | symbol, unknown>)[prop];
-  },
-});
+// Also export a `db` proxy for backwards compatibility.
+// The proxy delegates all property access to the lazy singleton.
+export const db = new Proxy(
+  {} as NeonHttpDatabase<typeof schema>,
+  {
+    get(_, prop, receiver) {
+      const realDb = getDb();
+      const value = Reflect.get(realDb, prop, realDb);
+      if (typeof value === "function") {
+        return value.bind(realDb);
+      }
+      return value;
+    },
+  }
+);
 
-export type Database = ReturnType<typeof createDb>;
+export type Database = NeonHttpDatabase<typeof schema>;

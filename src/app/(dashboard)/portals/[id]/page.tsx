@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { portals, files, comments } from "@/lib/db/schema";
-import { eq, and, count } from "drizzle-orm";
+import { portals, files, comments, messages } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,12 +9,11 @@ import {
   ExternalLink,
   FileText,
   MessageSquare,
-  Copy,
-  MoreHorizontal,
-  Upload,
   CheckCircle2,
   Clock,
   AlertCircle,
+  Download,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +27,18 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CopyLinkButton } from "@/components/dashboard/copy-link-button";
+import { FileUpload } from "@/components/dashboard/file-upload";
+import { FileActions } from "@/components/dashboard/file-actions";
+import { CommentForm } from "@/components/dashboard/comment-form";
+import { MessageThread } from "@/components/dashboard/message-thread";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
 
 interface PortalPageProps {
   params: Promise<{ id: string }>;
@@ -54,7 +65,14 @@ export default async function PortalPage({ params }: PortalPageProps) {
   const portalComments = await db.query.comments.findMany({
     where: eq(comments.portalId, portal.id),
     orderBy: (comments, { desc }) => [desc(comments.createdAt)],
-    limit: 20,
+    limit: 50,
+  });
+
+  // Get messages
+  const portalMessages = await db.query.messages.findMany({
+    where: eq(messages.portalId, portal.id),
+    orderBy: (messages, { asc }) => [asc(messages.createdAt)],
+    limit: 100,
   });
 
   const portalUrl = `${process.env.NEXT_PUBLIC_APP_URL}/portal/${portal.slug}`;
@@ -160,25 +178,16 @@ export default async function PortalPage({ params }: PortalPageProps) {
           <TabsTrigger value="comments">
             Comments ({portalComments.length})
           </TabsTrigger>
+          <TabsTrigger value="messages">
+            Messages ({portalMessages.length})
+          </TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
 
+        {/* Files Tab */}
         <TabsContent value="files" className="space-y-4">
-          {/* Upload Area */}
-          <Card className="border-dashed">
-            <CardContent className="flex flex-col items-center justify-center py-8">
-              <Upload className="h-8 w-8 text-muted-foreground/50 mb-3" />
-              <p className="text-sm font-medium">Upload files</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Drag and drop or click to upload deliverables
-              </p>
-              <Button variant="outline" size="sm" className="mt-4">
-                Choose Files
-              </Button>
-            </CardContent>
-          </Card>
+          <FileUpload portalId={portal.id} />
 
-          {/* File List */}
           {portalFiles.length === 0 ? (
             <Card>
               <CardContent className="text-center py-12">
@@ -195,28 +204,58 @@ export default async function PortalPage({ params }: PortalPageProps) {
                 <Card key={file.id}>
                   <CardContent className="flex items-center justify-between py-3 px-4">
                     <div className="flex items-center space-x-3">
-                      <FileText className="h-5 w-5 text-muted-foreground" />
+                      <div className="h-9 w-9 rounded-lg bg-muted flex items-center justify-center">
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                      </div>
                       <div>
                         <p className="text-sm font-medium">{file.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          {file.mimeType} •{" "}
+                          {formatBytes(file.sizeBytes)} •{" "}
+                          {file.mimeType || "unknown"} •{" "}
                           {new Date(file.createdAt).toLocaleDateString()}
                         </p>
                       </div>
                     </div>
-                    <Badge
-                      variant={
-                        file.status === "approved"
-                          ? "default"
-                          : file.status === "changes_requested"
-                          ? "destructive"
-                          : "secondary"
-                      }
-                    >
-                      {file.status === "changes_requested"
-                        ? "Changes Requested"
-                        : file.status}
-                    </Badge>
+                    <div className="flex items-center space-x-2">
+                      <Badge
+                        variant={
+                          file.status === "approved"
+                            ? "default"
+                            : file.status === "changes_requested"
+                            ? "destructive"
+                            : "secondary"
+                        }
+                        className="flex items-center space-x-1"
+                      >
+                        {file.status === "approved" && (
+                          <CheckCircle2 className="h-3 w-3" />
+                        )}
+                        {file.status === "pending" && (
+                          <Clock className="h-3 w-3" />
+                        )}
+                        {file.status === "changes_requested" && (
+                          <AlertCircle className="h-3 w-3" />
+                        )}
+                        <span>
+                          {file.status === "changes_requested"
+                            ? "Changes"
+                            : file.status}
+                        </span>
+                      </Badge>
+                      <a
+                        href={file.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Download className="h-3.5 w-3.5" />
+                        </Button>
+                      </a>
+                      <FileActions
+                        fileId={file.id}
+                        currentStatus={file.status}
+                      />
+                    </div>
                   </CardContent>
                 </Card>
               ))}
@@ -224,23 +263,36 @@ export default async function PortalPage({ params }: PortalPageProps) {
           )}
         </TabsContent>
 
-        <TabsContent value="comments">
+        {/* Comments Tab */}
+        <TabsContent value="comments" className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Add Comment</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CommentForm portalId={portal.id} />
+            </CardContent>
+          </Card>
+
           {portalComments.length === 0 ? (
             <Card>
               <CardContent className="text-center py-12">
                 <MessageSquare className="mx-auto h-12 w-12 text-muted-foreground/30" />
                 <h3 className="mt-4 font-semibold">No comments yet</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Comments from your client will appear here.
+                  Comments from you and your client will appear here.
                 </p>
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {portalComments.map((comment) => (
                 <Card key={comment.id}>
                   <CardContent className="pt-4">
                     <div className="flex items-center space-x-2 mb-2">
+                      <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium">
+                        {comment.authorName.charAt(0)}
+                      </div>
                       <span className="text-sm font-medium">
                         {comment.authorName}
                       </span>
@@ -253,7 +305,7 @@ export default async function PortalPage({ params }: PortalPageProps) {
                         </Badge>
                       )}
                     </div>
-                    <p className="text-sm">{comment.content}</p>
+                    <p className="text-sm pl-8">{comment.content}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -261,6 +313,26 @@ export default async function PortalPage({ params }: PortalPageProps) {
           )}
         </TabsContent>
 
+        {/* Messages Tab */}
+        <TabsContent value="messages">
+          <Card>
+            <CardHeader>
+              <CardTitle>Messages</CardTitle>
+              <CardDescription>
+                Direct conversation with your client
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MessageThread
+                portalId={portal.id}
+                messages={portalMessages}
+                currentUserEmail={session.user.email || undefined}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Settings Tab */}
         <TabsContent value="settings">
           <Card>
             <CardHeader>
@@ -282,6 +354,19 @@ export default async function PortalPage({ params }: PortalPageProps) {
                 <p className="text-sm text-muted-foreground mt-1">
                   {portal.clientEmail || "Not set"}
                 </p>
+              </div>
+              <Separator />
+              <div>
+                <p className="text-sm font-medium">Brand Color</p>
+                <div className="flex items-center space-x-2 mt-1">
+                  <div
+                    className="h-6 w-6 rounded-full"
+                    style={{ backgroundColor: portal.primaryColor }}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {portal.primaryColor}
+                  </span>
+                </div>
               </div>
               <Separator />
               <div>
