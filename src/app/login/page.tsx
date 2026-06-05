@@ -24,10 +24,12 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
     try {
-      // signIn with resend provider
       const { signIn } = await import("next-auth/react");
-      await signIn("resend", { email, callbackUrl: "/dashboard" });
-      setEmailSent(true);
+      await signIn("credentials", {
+        email,
+        callbackUrl: "/dashboard",
+        redirect: true,
+      });
     } catch {
       // Error handled by next-auth
     } finally {
@@ -137,7 +139,7 @@ export default function LoginPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Sending link..." : "Send Magic Link"}
+              {isLoading ? "Signing in..." : "Sign In with Email"}
             </Button>
           </form>
 
